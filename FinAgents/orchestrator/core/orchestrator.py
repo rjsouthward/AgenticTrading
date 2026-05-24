@@ -5,7 +5,7 @@ CAPITAL = 100000
 
 orchestrator = create_supervisor(
     agents=[], #TODO: add agent pool A2A protocol interaction here
-    model=ChatOpenAI(model="gpt-4o"),
+    model=ChatOpenAI(model="openai-gpt-oss-120b"),
     prompt=(
         f'''
         You are the supervisor of an end-to-end automated trading system.

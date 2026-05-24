@@ -69,7 +69,7 @@ class PolygonAgent(BaseAgent):
         - Context management
         """
         self.llm = ChatOpenAI(
-            model_name="o4-mini",
+            model_name="openai-gpt-oss-120b",
             temperature=1 
         )
         # Enhanced system prompt for robust multi-step, multi-symbol, multi-type planning

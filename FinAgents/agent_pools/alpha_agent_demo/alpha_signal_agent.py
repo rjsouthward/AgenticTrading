@@ -422,7 +422,7 @@ class AlphaSignalAgent:
     def __init__(
         self,
         name: str = "AlphaSignalAgent",
-        model: str = "gpt-4o",
+        model: str = "openai-gpt-oss-120b",
         qlib_config: Optional[QlibConfig] = None
     ):
         self.name = name

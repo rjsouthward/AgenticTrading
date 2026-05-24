@@ -1,0 +1,26 @@
+# fly.toml — agentictrading (Finance GBrain Layer 1 MemoryAgent)
+app = 'agentictrading'
+primary_region = 'sjc'
+
+[build]
+  dockerfile = 'Dockerfile'
+
+[http_service]
+  internal_port = 8000          # uvicorn binds 8000 (see Dockerfile CMD)
+  force_https = true
+  auto_stop_machines = 'off'    # always-on brain — do not scale to zero
+  auto_start_machines = true
+  min_machines_running = 1      # single instance (in-memory stream state not replica-safe yet)
+  processes = ['app']
+
+  # Platform health check — keep unauthenticated (see Phase 3)
+  [[http_service.checks]]
+    method = 'get'
+    path = '/health'
+    interval = '30s'
+    timeout = '5s'
+    grace_period = '25s'        # app connects to Neo4j Aura on startup
+
+[[vm]]
+  memory = '1gb'
+  cpus = 1

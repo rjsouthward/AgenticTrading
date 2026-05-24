@@ -685,7 +685,7 @@ Always prioritize statistical rigor, research transparency, and practical applic
 
 mean_reversion_agent = Agent(
     name="mean-reversion-alpha-agent",
-    model="gpt-4",  # Can be changed to "claude-sonnet-4.5" or other supported models
+    model="openai-gpt-oss-120b",  # Can be changed to "claude-sonnet-4.5" or other supported models
     instructions=AGENT_INSTRUCTIONS,
     tools=[
         fetch_data,

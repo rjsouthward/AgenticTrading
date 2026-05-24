@@ -34,6 +34,12 @@ project_root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(project_root))
 
 try:
+    from dotenv import load_dotenv
+    load_dotenv(dotenv_path=project_root / ".env")
+except ImportError:
+    pass
+
+try:
     from neo4j import GraphDatabase
     from neo4j.exceptions import ServiceUnavailable, AuthError
     NEO4J_AVAILABLE = True
@@ -346,15 +352,16 @@ async def main():
         default="init",
         help="Action to perform"
     )
-    parser.add_argument("--uri", default="bolt://localhost:7687", help="Neo4j URI")
-    parser.add_argument("--username", default="neo4j", help="Neo4j username")
-    parser.add_argument("--password", default="password", help="Neo4j password")
-    parser.add_argument("--database", default="finagent", help="Database name")
-    
+    # Defaults come from the environment (.env) so the script targets the
+    # configured instance out of the box; CLI flags still override.
+    parser.add_argument("--uri", default=os.getenv("NEO4J_URI", "bolt://localhost:7687"), help="Neo4j URI")
+    parser.add_argument("--username", default=os.getenv("NEO4J_USERNAME") or os.getenv("NEO4J_USER", "neo4j"), help="Neo4j username")
+    parser.add_argument("--password", default=os.getenv("NEO4J_PASSWORD", "password"), help="Neo4j password")
+    parser.add_argument("--database", default=os.getenv("NEO4J_DATABASE", "neo4j"), help="Database name")
+
     args = parser.parse_args()
-    
-    # Get password from environment if available
-    password = os.getenv("NEO4J_PASSWORD", args.password)
+
+    password = args.password
     
     print("\n" + "="*80)
     print("🗄️  FinAgent Neo4j Database Setup")

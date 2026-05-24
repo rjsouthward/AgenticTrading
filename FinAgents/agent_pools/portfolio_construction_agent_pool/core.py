@@ -649,7 +649,7 @@ class PortfolioConstructionAgentPool:
             user_prompt = f"Portfolio construction request: {user_input}"
             
             response = await self.openai_client.chat.completions.create(
-                model="gpt-4",
+                model="openai-gpt-oss-120b",
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt}
@@ -1491,7 +1491,7 @@ class PortfolioConstructionAgent:
         # Initialize LLM if OpenAI is available
         if agent_pool.openai_client:
             self.llm = ChatOpenAI(
-                model="gpt-4",
+                model="openai-gpt-oss-120b",
                 temperature=0.1,
                 api_key=agent_pool.openai_api_key
             )

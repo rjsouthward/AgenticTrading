@@ -79,7 +79,7 @@ class BacktestAgent(Agent):
         self.name = "BacktestAgent"
         self.description = "An agent that performs backtesting of trading strategies using historical market data and Qlib framework."
         self.model = ModelSettings(
-            model_name="gpt-4-turbo",
+            model_name="openai-gpt-oss-120b",
             temperature=0.3,
             max_tokens=2000,
             top_p=1.0,

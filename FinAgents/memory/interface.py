@@ -190,7 +190,7 @@ async def run_conversation_with_tools(user_prompt: str, mcp_session: ClientSessi
         try:
             print("💬 [CLIENT] Sending request to OpenAI...")
             response = client.chat.completions.create(
-                model="gpt-4o", 
+                model="openai-gpt-oss-120b", 
                 messages=messages,
                 tools=tools_definition,
                 tool_choice="auto", 

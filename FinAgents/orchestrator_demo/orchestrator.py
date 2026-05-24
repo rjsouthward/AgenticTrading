@@ -69,9 +69,9 @@ class Orchestrator:
             
         # Initialize Sub-Agents
         # Updated to use GPT-4o as requested
-        self.alpha_agent = AlphaSignalAgent(name="AlphaCore", model="gpt-4o")
-        self.risk_agent = RiskSignalAgent(name="RiskCore", model="gpt-4o")
-        self.portfolio_agent = PortfolioAgent(name="PortfolioCore", model="gpt-4o")
+        self.alpha_agent = AlphaSignalAgent(name="AlphaCore", model="openai-gpt-oss-120b")
+        self.risk_agent = RiskSignalAgent(name="RiskCore", model="openai-gpt-oss-120b")
+        self.portfolio_agent = PortfolioAgent(name="PortfolioCore", model="openai-gpt-oss-120b")
         
         self.execution_agent = ExecutionAgent(
             alpaca_api_key=self.api_key, 
@@ -546,7 +546,7 @@ class Orchestrator:
         if hasattr(target_agent, 'client') and target_agent.client:
             try:
                 response = target_agent.client.chat.completions.create(
-                    model="gpt-4o", # Use strong model for optimization
+                    model="openai-gpt-oss-120b", # Use strong model for optimization
                     messages=[{"role": "user", "content": meta_prompt}]
                 )
                 new_instructions = response.choices[0].message.content

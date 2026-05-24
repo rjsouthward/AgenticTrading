@@ -38,17 +38,25 @@ except ImportError:
 
 # Intelligent indexer imports
 try:
-    from .intelligent_memory_indexer import IntelligentMemoryIndexer
+    from intelligent_memory_indexer import IntelligentMemoryIndexer
     INDEXER_AVAILABLE = True
 except ImportError:
-    INDEXER_AVAILABLE = False
+    try:
+        from .intelligent_memory_indexer import IntelligentMemoryIndexer
+        INDEXER_AVAILABLE = True
+    except ImportError:
+        INDEXER_AVAILABLE = False
 
 # Stream processor imports  
 try:
-    from .realtime_stream_processor import StreamProcessor, ReactiveMemoryManager
+    from realtime_stream_processor import StreamProcessor, ReactiveMemoryManager
     STREAM_PROCESSOR_AVAILABLE = True
 except ImportError:
-    STREAM_PROCESSOR_AVAILABLE = False
+    try:
+        from .realtime_stream_processor import StreamProcessor, ReactiveMemoryManager
+        STREAM_PROCESSOR_AVAILABLE = True
+    except ImportError:
+        STREAM_PROCESSOR_AVAILABLE = False
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -220,8 +228,8 @@ class UnifiedDatabaseManager:
                 logger.info("✅ Neo4j connection closed")
             
             # Close stream processor if available
-            if self.stream_processor:
-                await self.stream_processor.shutdown()
+            if self.stream_processor and hasattr(self.stream_processor, "stop_processing"):
+                await self.stream_processor.stop_processing()
                 
         except Exception as e:
             logger.error(f"❌ Error closing connections: {e}")
@@ -292,13 +300,31 @@ class UnifiedDatabaseManager:
                     session_id: $session_id,
                     correlation_id: $correlation_id,
                     created_at: datetime(),
-                    lookup_count: 0
+                    lookup_count: 0,
+                    embedding: $embedding,
+                    embedding_model: $embedding_model,
+                    embedding_dim: $embedding_dim,
+                    needs_embedding: $needs_embedding
                 })
                 RETURN m.memory_id as stored_id
                 """
                 
                 # Prepare searchable text
                 content_text = f"{query} {summary} {' '.join(keywords)}".lower()
+
+                # Embed on write (bge-m3 via the indexer). On failure, store the node
+                # anyway and flag needs_embedding=true for a later backfill pass.
+                embedding = None
+                embedding_model = getattr(self.indexer, "embedding_model_name", None) if self.indexer else None
+                embedding_dim = getattr(self.indexer, "embedding_dim", 0) if self.indexer else 0
+                needs_embedding = True
+                if self.indexer:
+                    try:
+                        vec = self.indexer.create_text_embedding(content_text)
+                        embedding = [float(x) for x in vec]
+                        needs_embedding = False
+                    except Exception as e:
+                        logger.warning(f"⚠️ Embed-on-write failed (stored without vector): {e}")
                 
                 result = session.run(memory_query, {
                     "memory_id": memory_id,
@@ -312,7 +338,11 @@ class UnifiedDatabaseManager:
                     "event_type": event_type,
                     "log_level": log_level,
                     "session_id": session_id,
-                    "correlation_id": correlation_id
+                    "correlation_id": correlation_id,
+                    "embedding": embedding,
+                    "embedding_model": embedding_model,
+                    "embedding_dim": embedding_dim,
+                    "needs_embedding": needs_embedding
                 })
                 
                 stored_id = result.single()["stored_id"]
@@ -323,12 +353,11 @@ class UnifiedDatabaseManager:
                 # Find and link similar memories
                 linked_memories = await self._find_and_link_similar_memories(session, memory_id, keywords, summary)
                 
-                # Index memory for intelligent search
-                if self.indexer:
-                    self.indexer.index_memory(memory_id, memory_content)
+                # Embeddings are persisted on the node (embed-on-write) and searched via the
+                # Neo4j vector index — the in-process pickle index is retired as the search path.
                 
                 # Publish memory event to stream processor
-                if self.reactive_manager:
+                if self.reactive_manager and hasattr(self.reactive_manager, "handle_memory_event"):
                     await self.reactive_manager.handle_memory_event({
                         "event_type": "memory_stored",
                         "memory_id": memory_id,
@@ -350,6 +379,169 @@ class UnifiedDatabaseManager:
         except Exception as e:
             logger.error(f"❌ Failed to store memory: {e}")
             raise Exception(f"Memory storage failed: {str(e)}")
+
+    async def vector_search(self, query_embedding, limit: int = 10,
+                            similarity_threshold: float = 0.0) -> List[Dict[str, Any]]:
+        """Semantic search via the Neo4j native vector index (cosine, 1024-dim)."""
+        if not self.is_connected:
+            raise Exception("Database not connected")
+        vec = [float(x) for x in query_embedding]
+        cypher = """
+        CALL db.index.vector.queryNodes('memory_embedding_index', $k, $vec)
+        YIELD node, score
+        WHERE score >= $threshold
+        RETURN node.memory_id AS memory_id, node.agent_id AS agent_id,
+               node.summary AS summary, node.content AS content,
+               node.keywords AS keywords, node.event_type AS event_type,
+               node.timestamp AS timestamp, score AS similarity_score
+        ORDER BY score DESC
+        """
+        results: List[Dict[str, Any]] = []
+        with self.driver.session(database=self.database) as session:
+            for r in session.run(cypher, {"k": int(limit), "vec": vec,
+                                          "threshold": float(similarity_threshold)}):
+                results.append({
+                    "memory_id": r["memory_id"],
+                    "agent_id": r["agent_id"],
+                    "summary": r["summary"],
+                    "content": json.loads(r["content"]) if r.get("content") else {},
+                    "keywords": r["keywords"],
+                    "event_type": r["event_type"],
+                    "timestamp": r["timestamp"].isoformat() if r.get("timestamp") else None,
+                    "similarity_score": float(r["similarity_score"]),
+                })
+        self.operation_count += 1
+        return results
+
+    # ═══════════════════════════════════════════════════════════════════════════════════
+    # GBRAIN GENERALIZATION — domain-agnostic :Page nodes (Phase 2)
+    # ═══════════════════════════════════════════════════════════════════════════════════
+
+    @staticmethod
+    def _slugify(title: str) -> str:
+        s = "".join(c if c.isalnum() else "-" for c in (title or "").lower())
+        s = "-".join(filter(None, s.split("-")))[:80]
+        return s or str(uuid.uuid4())
+
+    async def put_page(self, title: str, body: str, namespace: str = "default",
+                       slug: Optional[str] = None, tags: Optional[List[str]] = None,
+                       kind: str = "knowledge", links: Optional[List[str]] = None,
+                       written_by: Optional[str] = None, agent_type: Optional[str] = None,
+                       agent_instance_id: Optional[str] = None, source: Optional[str] = None,
+                       trust: str = "trusted") -> Dict[str, Any]:
+        """Upsert a knowledge page (gbrain put_page). Embeds title+body; bumps version on update."""
+        if not self.is_connected:
+            raise Exception("Database not connected")
+        tags = tags or []
+        links = links or []
+        slug = slug or self._slugify(title)
+        page_key = f"{namespace}::{slug}"
+
+        text = f"{title}\n\n{body}".strip()
+        embedding = None
+        needs_embedding = True
+        embedding_model = getattr(self.indexer, "embedding_model_name", None) if self.indexer else None
+        embedding_dim = getattr(self.indexer, "embedding_dim", 0) if self.indexer else 0
+        if self.indexer:
+            try:
+                v = self.indexer.create_text_embedding(text)
+                embedding = [float(x) for x in v]
+                needs_embedding = False
+            except Exception as e:
+                logger.warning(f"⚠️ Page embed-on-write failed (stored without vector): {e}")
+
+        cypher = """
+        MERGE (p:Page {page_key: $page_key})
+        ON CREATE SET p.id = $id, p.created_at = datetime(), p.version = 1
+        ON MATCH  SET p.version = coalesce(p.version, 0) + 1
+        SET p.namespace = $namespace, p.slug = $slug, p.title = $title, p.body = $body,
+            p.tags = $tags, p.kind = $kind, p.embedding = $embedding,
+            p.embedding_model = $embedding_model, p.embedding_dim = $embedding_dim,
+            p.needs_embedding = $needs_embedding, p.written_by = $written_by,
+            p.agent_type = $agent_type, p.agent_instance_id = $agent_instance_id,
+            p.source = $source, p.trust = $trust, p.updated_at = datetime()
+        RETURN p.id AS id, p.version AS version, p.namespace AS namespace, p.slug AS slug
+        """
+        with self.driver.session(database=self.database) as session:
+            rec = session.run(cypher, {
+                "page_key": page_key, "id": str(uuid.uuid4()), "namespace": namespace,
+                "slug": slug, "title": title, "body": body, "tags": tags, "kind": kind,
+                "embedding": embedding, "embedding_model": embedding_model,
+                "embedding_dim": embedding_dim, "needs_embedding": needs_embedding,
+                "written_by": written_by, "agent_type": agent_type,
+                "agent_instance_id": agent_instance_id, "source": source, "trust": trust,
+            }).single()
+            for tgt in links:
+                session.run(
+                    "MATCH (a:Page {page_key:$a}), (b:Page {page_key:$b}) MERGE (a)-[:LINKS_TO]->(b)",
+                    {"a": page_key, "b": f"{namespace}::{tgt}"})
+        self.operation_count += 1
+        return {"id": rec["id"], "namespace": rec["namespace"], "slug": rec["slug"],
+                "version": rec["version"], "needs_embedding": needs_embedding, "status": "success"}
+
+    async def get_page(self, slug: str, namespace: str = "default") -> Optional[Dict[str, Any]]:
+        """Fetch a page by (namespace, slug) with its outgoing links."""
+        if not self.is_connected:
+            raise Exception("Database not connected")
+        cypher = """
+        MATCH (p:Page {page_key: $k})
+        OPTIONAL MATCH (p)-[:LINKS_TO]->(t:Page)
+        RETURN p AS page, collect(t.slug) AS links
+        """
+        with self.driver.session(database=self.database) as session:
+            rec = session.run(cypher, {"k": f"{namespace}::{slug}"}).single()
+        if not rec:
+            return None
+        p = rec["page"]
+        return {
+            "id": p.get("id"), "namespace": p.get("namespace"), "slug": p.get("slug"),
+            "title": p.get("title"), "body": p.get("body"), "tags": p.get("tags"),
+            "kind": p.get("kind"), "version": p.get("version"),
+            "source": p.get("source"), "trust": p.get("trust"),
+            "links": [l for l in rec["links"] if l],
+            "updated_at": p.get("updated_at").isoformat() if p.get("updated_at") else None,
+        }
+
+    async def search_pages(self, query_embedding, namespace: str = "default", limit: int = 10,
+                          kind: Optional[str] = None, similarity_threshold: float = 0.0) -> List[Dict[str, Any]]:
+        """Semantic search over :Page via the Neo4j vector index, scoped to a namespace (and optional kind)."""
+        if not self.is_connected:
+            raise Exception("Database not connected")
+        vec = [float(x) for x in query_embedding]
+        fetch = max(int(limit) * 5, 20)  # over-fetch, then filter by namespace/kind
+        cypher = """
+        CALL db.index.vector.queryNodes('page_embedding_index', $fetch, $vec)
+        YIELD node, score
+        WHERE node.namespace = $ns AND ($kind IS NULL OR node.kind = $kind) AND score >= $th
+        RETURN node.slug AS slug, node.title AS title, node.kind AS kind,
+               node.tags AS tags, node.namespace AS namespace, score AS similarity_score
+        ORDER BY score DESC
+        LIMIT $limit
+        """
+        results: List[Dict[str, Any]] = []
+        with self.driver.session(database=self.database) as session:
+            for r in session.run(cypher, {"fetch": fetch, "vec": vec, "ns": namespace,
+                                          "kind": kind, "th": float(similarity_threshold),
+                                          "limit": int(limit)}):
+                results.append({"slug": r["slug"], "title": r["title"], "kind": r["kind"],
+                                "tags": r["tags"], "namespace": r["namespace"],
+                                "similarity_score": float(r["similarity_score"])})
+        return results
+
+    async def link_pages(self, from_slug: str, to_slug: str, namespace: str = "default") -> Dict[str, Any]:
+        """Create a (:Page)-[:LINKS_TO]->(:Page) edge within a namespace."""
+        if not self.is_connected:
+            raise Exception("Database not connected")
+        cypher = """
+        MATCH (a:Page {page_key:$a}), (b:Page {page_key:$b})
+        MERGE (a)-[:LINKS_TO]->(b)
+        RETURN count(*) AS linked
+        """
+        with self.driver.session(database=self.database) as session:
+            rec = session.run(cypher, {"a": f"{namespace}::{from_slug}",
+                                       "b": f"{namespace}::{to_slug}"}).single()
+        return {"linked": rec["linked"] if rec else 0, "from": from_slug,
+                "to": to_slug, "namespace": namespace}
 
     async def store_memories_batch(self, events: List[Dict[str, Any]]) -> int:
         """
@@ -847,7 +1039,44 @@ class UnifiedDatabaseManager:
                         session.run(constraint)
                     except Exception as e:
                         logger.debug(f"Constraint note: {e}")
-                
+
+                # Vector index for semantic search (Neo4j 5.x native vector index).
+                # Dimension/similarity are LOCKED to the embedding model: bge-m3 = 1024, cosine.
+                # Switching to any other 1024-dim model (gte-large-en-v1.5, e5-large-v2,
+                # qwen3-embedding-0.6b) requires only re-embedding, not an index rebuild.
+                try:
+                    session.run(
+                        """
+                        CREATE VECTOR INDEX memory_embedding_index IF NOT EXISTS
+                        FOR (m:Memory) ON (m.embedding)
+                        OPTIONS { indexConfig: {
+                            `vector.dimensions`: 1024,
+                            `vector.similarity_function`: 'cosine'
+                        }}
+                        """
+                    )
+                    logger.info("✅ Vector index (1024-dim, cosine) ensured on :Memory(embedding)")
+                except Exception as e:
+                    logger.warning(f"Vector index note (requires Neo4j 5.x): {e}")
+
+                # :Page (gbrain generalization) — synthetic composite key (namespace::slug) for
+                # portability across Neo4j editions, plus its own 1024/cosine vector index.
+                try:
+                    session.run("CREATE CONSTRAINT page_key_unique IF NOT EXISTS FOR (p:Page) REQUIRE p.page_key IS UNIQUE")
+                    session.run(
+                        """
+                        CREATE VECTOR INDEX page_embedding_index IF NOT EXISTS
+                        FOR (p:Page) ON (p.embedding)
+                        OPTIONS { indexConfig: {
+                            `vector.dimensions`: 1024,
+                            `vector.similarity_function`: 'cosine'
+                        }}
+                        """
+                    )
+                    logger.info("✅ :Page constraint + vector index (1024, cosine) ensured")
+                except Exception as e:
+                    logger.warning(f"Page schema note: {e}")
+
                 # Create indexes
                 await self.create_memory_index()
                 await self.create_structured_indexes()

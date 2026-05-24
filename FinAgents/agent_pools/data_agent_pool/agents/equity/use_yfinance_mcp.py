@@ -140,7 +140,7 @@ async def run_agent_with_yfinance_server(args: argparse.Namespace) -> None:
                 "before answering. Respond with JSON only."
             ),
             mcp_servers=[server],
-            model_settings=ModelSettings(model="gpt-4.1-mini", tool_choice="required"),
+            model_settings=ModelSettings(model="openai-gpt-oss-120b", tool_choice="required"),
         )
 
         result = await Runner.run(agent, prompt)

@@ -4,7 +4,7 @@ Simple Agent framework for trading agents
 
 class ModelSettings:
     """Model settings for AI agents"""
-    def __init__(self, model_name="gpt-4", temperature=0.3, max_tokens=2000, 
+    def __init__(self, model_name="openai-gpt-oss-120b", temperature=0.3, max_tokens=2000, 
                  top_p=1.0, frequency_penalty=0.0, presence_penalty=0.0):
         self.model_name = model_name
         self.temperature = temperature

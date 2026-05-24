@@ -31,7 +31,7 @@ class MCPNaturalLanguageInterface:
         # Initialize LLM integration
         llm_config = LLMConfig(
             provider=self.config.get("llm", {}).get("provider", "openai"),
-            model=self.config.get("llm", {}).get("model", "gpt-4"),
+            model=self.config.get("llm", {}).get("model", "openai-gpt-oss-120b"),
             temperature=self.config.get("llm", {}).get("temperature", 0.7)
         )
         
@@ -453,7 +453,7 @@ async def main():
         },
         "llm": {
             "provider": "openai",
-            "model": "gpt-4",
+            "model": "openai-gpt-oss-120b",
             "temperature": 0.7
         }
     }

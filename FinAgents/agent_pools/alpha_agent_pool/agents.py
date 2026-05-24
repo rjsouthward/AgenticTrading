@@ -31,7 +31,7 @@ class Agent:
     General-purpose agent class supporting OpenAI Function Calling with automatic tool execution.
     """
 
-    def __init__(self, name="Agent", instructions="", model="gpt-4o-mini", tools=None):
+    def __init__(self, name="Agent", instructions="", model="openai-gpt-oss-120b", tools=None):
         self.name = name
         self.instructions = instructions
         self.model = model

@@ -108,7 +108,7 @@ class ContextDecompressor:
             """
             
             response = await self.openai_client.chat.completions.create(
-                model="gpt-4o-mini",
+                model="openai-gpt-oss-120b",
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": f"Parse this risk analysis request: {context}"}

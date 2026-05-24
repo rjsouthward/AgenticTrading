@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 class LLMConfig:
     """Configuration for LLM integration"""
     provider: str = "openai"  # openai, anthropic, local
-    model: str = "gpt-4"
+    model: str = "openai-gpt-oss-120b"
     api_key: Optional[str] = None
     base_url: Optional[str] = None
     temperature: float = 0.7
@@ -411,7 +411,7 @@ if __name__ == "__main__":
         # Initialize LLM config
         config = LLMConfig(
             provider="openai",
-            model="gpt-4",
+            model="openai-gpt-oss-120b",
             temperature=0.7
         )
         

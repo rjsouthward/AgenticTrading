@@ -58,7 +58,7 @@ class NewsAPIAgent(BaseAgent):
     def _init_llm_interface(self):
         """Configure LLM interface for news analysis."""
         self.llm = ChatOpenAI(
-            model_name="gpt-4o-mini",
+            model_name="openai-gpt-oss-120b",
             temperature=0.1 
         )
         

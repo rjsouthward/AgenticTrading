@@ -278,7 +278,7 @@ def main():
     
     # Initialize agent
     print(f"\n2. Initializing Risk Signal Agent...")
-    agent = RiskSignalAgent(name="RealDataRiskAgent", model="gpt-5")
+    agent = RiskSignalAgent(name="RealDataRiskAgent", model="openai-gpt-oss-120b")
     
     # Prepare data summary for agent context
     data_summary = {

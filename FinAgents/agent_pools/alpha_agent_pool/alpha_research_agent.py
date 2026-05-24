@@ -258,7 +258,7 @@ class AlphaResearchAgent:
         self.context = AlphaResearchContext()
         self.agent = Agent(
             name="AlphaResearchAgent",
-            model="gpt-4o-mini",
+            model="openai-gpt-oss-120b",
             instructions="""
 You are a professional quantitative research assistant. You can call the following tools:
 - load_and_analyze_data
@@ -317,7 +317,7 @@ Please provide:
 
         try:
             response = self.agent.client.chat.completions.create(
-                model="gpt-4o-mini",
+                model="openai-gpt-oss-120b",
                 messages=[
                     {"role": "system", "content": "You are a professional quantitative analyst specializing in alpha factor research."},
                     {"role": "user", "content": text_prompt},

@@ -817,7 +817,7 @@ Focus on intelligent adaptation and RL-style learning. Use the multi-timeframe a
         
         try:
             response = await self.llm_client.chat.completions.create(
-                model="o4-mini",
+                model="openai-gpt-oss-120b",
                 messages=[
                     {"role": "system", "content": "You are an expert quantitative analyst specializing in multi-timeframe momentum analysis. Make intelligent, adaptive trading decisions."},
                     {"role": "user", "content": prompt}
@@ -1339,7 +1339,7 @@ Focus on intelligent adaptation and RL-style learning. Use the multi-timeframe a
             """
             
             response = await self.llm_client.chat.completions.create(
-                model="gpt-4o-mini",
+                model="openai-gpt-oss-120b",
                 messages=[{"role": "user", "content": context}],
                 temperature=0.1,
                 max_tokens=500

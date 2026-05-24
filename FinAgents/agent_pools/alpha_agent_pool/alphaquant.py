@@ -176,7 +176,7 @@ feats_global = []
 for rnd in range(1, ROUNDS + 1):
     print(f"\n===== Round {rnd} =====")
     feats, names, errors, code_str = llm_generate_features(
-        client, "gpt-4o-mini", log_returns, top_examples, eliminated, prev_errors, feedback, NUM_FEATURES)
+        client, "openai-gpt-oss-120b", log_returns, top_examples, eliminated, prev_errors, feedback, NUM_FEATURES)
 
     if not feats:
         print("No valid features generated.")

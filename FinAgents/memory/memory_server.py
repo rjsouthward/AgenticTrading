@@ -31,6 +31,11 @@ from contextlib import asynccontextmanager
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from pathlib import Path
+import functools
+
+# Route this module's diagnostic banners to stderr. In stdio MCP mode, stdout IS
+# the JSON-RPC protocol channel — anything printed to stdout would corrupt it.
+print = functools.partial(print, file=sys.stderr, flush=True)
 
 # Import unified components
 try:
@@ -41,6 +46,11 @@ except ImportError:
     # Fallback to original database for compatibility
     from database import TradingGraphMemory
     UNIFIED_COMPONENTS_AVAILABLE = False
+    # Define names so module-level annotations below don't raise NameError
+    UnifiedDatabaseManager = None
+    UnifiedInterfaceManager = None
+    create_database_manager = None
+    create_interface_manager = None
 
 # Import intelligent indexer and stream processor
 try:
@@ -48,20 +58,30 @@ try:
     INTELLIGENT_INDEXER_AVAILABLE = True
 except ImportError:
     INTELLIGENT_INDEXER_AVAILABLE = False
+    IntelligentMemoryIndexer = None
 
 try:
     from realtime_stream_processor import StreamProcessor, ReactiveMemoryManager
     STREAM_PROCESSOR_AVAILABLE = True
 except ImportError:
     STREAM_PROCESSOR_AVAILABLE = False
+    StreamProcessor = None
+    ReactiveMemoryManager = None
 
 # ═══════════════════════════════════════════════════════════════════════════════════
 # CONFIGURATION AND GLOBAL VARIABLES
 # ═══════════════════════════════════════════════════════════════════════════════════
 
-NEO4J_URI = "bolt://localhost:7687"
-NEO4J_USER = "neo4j"
-NEO4J_PASSWORD = "finagent123"
+try:
+    from dotenv import load_dotenv
+    load_dotenv(dotenv_path=Path(__file__).resolve().parents[2] / ".env")
+except ImportError:
+    pass
+
+NEO4J_URI = os.getenv("NEO4J_URI", "bolt://localhost:7687")
+NEO4J_USER = os.getenv("NEO4J_USERNAME") or os.getenv("NEO4J_USER", "neo4j")
+NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD", "finagent123")
+NEO4J_DATABASE = os.getenv("NEO4J_DATABASE", "neo4j")
 
 # Global instances for unified architecture
 UNIFIED_DATABASE_MANAGER: Optional[UnifiedDatabaseManager] = None
@@ -105,7 +125,7 @@ async def app_lifespan(server: FastMCP) -> AsyncIterator[None]:
                 "uri": NEO4J_URI,
                 "username": NEO4J_USER,
                 "password": NEO4J_PASSWORD,
-                "database": "neo4j"
+                "database": NEO4J_DATABASE
             }
             
             UNIFIED_DATABASE_MANAGER = create_database_manager(database_config)
@@ -196,9 +216,9 @@ async def app_lifespan(server: FastMCP) -> AsyncIterator[None]:
             await GRAPH_DB_INSTANCE.close()
             print("✅ [SERVER] Legacy database connection closed")
             
-        if STREAM_PROCESSOR:
-            await STREAM_PROCESSOR.shutdown()
-            print("✅ [SERVER] Stream processor shut down")
+        if STREAM_PROCESSOR and hasattr(STREAM_PROCESSOR, "stop_processing"):
+            await STREAM_PROCESSOR.stop_processing()
+            print("✅ [SERVER] Stream processor stopped")
             
         print("🛑 [SERVER] Memory server shutdown complete")
 
@@ -252,7 +272,7 @@ async def store_graph_memory(
                 print(f"   ✅ [SERVER] {message}")
                 
                 # Publish to stream processor if available
-                if REACTIVE_MANAGER:
+                if REACTIVE_MANAGER and hasattr(REACTIVE_MANAGER, "handle_memory_event"):
                     await REACTIVE_MANAGER.handle_memory_event({
                         "event_type": "memory_stored",
                         "memory_id": stored_data.get("memory_id"),
@@ -615,53 +635,47 @@ async def semantic_search_memories(
         raise Exception("No database connection available for semantic search.")
 
     try:
-        # Get memories for semantic search
-        if UNIFIED_DATABASE_MANAGER:
-            all_memories = await UNIFIED_DATABASE_MANAGER.retrieve_memory("", limit=1000)
-        else:
-            all_memories = await GRAPH_DB_INSTANCE.retrieve_memory("", limit=1000)
-        
-        if not all_memories:
+        # Vector search requires the unified manager (Neo4j native vector index).
+        if not UNIFIED_DATABASE_MANAGER:
             return json.dumps({
-                "status": "success",
-                "results": [],
-                "message": "No memories found in database for semantic search."
+                "status": "error",
+                "message": "Vector search requires the unified database manager.",
+                "search_type": "semantic"
             })
 
-        # Perform semantic search using intelligent indexer
-        search_results = INTELLIGENT_INDEXER.semantic_search(
-            query=query,
-            memories=all_memories,
-            top_k=limit,
-            similarity_threshold=similarity_threshold
+        # Embed the query with the same model used at write time (bge-m3, 1024-dim),
+        # then query the Neo4j vector index — no in-process scan of all memories.
+        embedder = INTELLIGENT_INDEXER or getattr(UNIFIED_DATABASE_MANAGER, "indexer", None)
+        if not embedder:
+            return json.dumps({
+                "status": "error",
+                "message": "No embedding backend available to embed the query.",
+                "search_type": "semantic"
+            })
+
+        query_embedding = embedder.create_text_embedding(query)
+        results = await UNIFIED_DATABASE_MANAGER.vector_search(
+            query_embedding, limit=limit, similarity_threshold=similarity_threshold
         )
-        
-        # Process results and handle numpy types
-        processed_results = []
-        for result in search_results:
-            processed_result = dict(result)
-            if 'similarity_score' in processed_result:
-                processed_result['similarity_score'] = float(processed_result['similarity_score'])
-            processed_results.append(processed_result)
-        
-        print(f"   ✅ [SERVER] Semantic search returned {len(processed_results)} results.")
-        
+
+        print(f"   ✅ [SERVER] Vector search returned {len(results)} results.")
+
         # Publish search event to stream processor
-        if REACTIVE_MANAGER:
+        if REACTIVE_MANAGER and hasattr(REACTIVE_MANAGER, "handle_search_event"):
             await REACTIVE_MANAGER.handle_search_event({
                 "query": query,
-                "results_count": len(processed_results),
+                "results_count": len(results),
                 "timestamp": datetime.utcnow().isoformat(),
                 "search_type": "semantic"
             })
-        
+
         response_data = {
             "status": "success",
-            "results": processed_results,
+            "results": results,
             "query": query,
             "similarity_threshold": similarity_threshold,
-            "architecture": "unified" if UNIFIED_DATABASE_MANAGER else "legacy",
-            "search_type": "semantic"
+            "architecture": "unified",
+            "search_type": "vector_index"
         }
         return json.dumps(response_data)
         
@@ -672,6 +686,66 @@ async def semantic_search_memories(
             "message": f"Semantic search failed: {str(e)}",
             "search_type": "semantic"
         })
+
+@mcp.tool(name="put_page",
+          description="Create or update a knowledge page (gbrain). Upserts by (namespace, slug); embeds title+body for semantic search; bumps version on update.")
+async def put_page(title: str, body: str, namespace: str = "default", slug: str = "",
+                   tags: Optional[List[str]] = None, kind: str = "knowledge",
+                   links: Optional[List[str]] = None, source: str = "", trust: str = "trusted"):
+    print(f"🛠️ [SERVER] TOOL: put_page ns={namespace} slug={slug or '(auto)'}")
+    if not UNIFIED_DATABASE_MANAGER:
+        return json.dumps({"status": "error", "message": "put_page requires the unified database manager."})
+    try:
+        r = await UNIFIED_DATABASE_MANAGER.put_page(
+            title=title, body=body, namespace=namespace, slug=(slug or None),
+            tags=tags, kind=kind, links=links, source=(source or None), trust=trust)
+        return json.dumps(r)
+    except Exception as e:
+        return json.dumps({"status": "error", "message": str(e)})
+
+
+@mcp.tool(name="get_page",
+          description="Fetch a knowledge page by (namespace, slug), including its outgoing links.")
+async def get_page(slug: str, namespace: str = "default"):
+    print(f"🛠️ [SERVER] TOOL: get_page ns={namespace} slug={slug}")
+    if not UNIFIED_DATABASE_MANAGER:
+        return json.dumps({"status": "error", "message": "get_page requires the unified database manager."})
+    page = await UNIFIED_DATABASE_MANAGER.get_page(slug, namespace=namespace)
+    return json.dumps(page if page else {"status": "not_found", "slug": slug, "namespace": namespace})
+
+
+@mcp.tool(name="search",
+          description="Semantic search over knowledge pages within a namespace (optionally filtered by kind).")
+async def search(query: str, namespace: str = "default", limit: int = 10,
+                 kind: str = "", similarity_threshold: float = 0.0):
+    print(f"🛠️ [SERVER] TOOL: search ns={namespace} q={query[:60]!r}")
+    if not UNIFIED_DATABASE_MANAGER:
+        return json.dumps({"status": "error", "message": "search requires the unified database manager."})
+    embedder = INTELLIGENT_INDEXER or getattr(UNIFIED_DATABASE_MANAGER, "indexer", None)
+    if not embedder:
+        return json.dumps({"status": "error", "message": "No embedding backend available to embed the query."})
+    try:
+        qv = embedder.create_text_embedding(query)
+        results = await UNIFIED_DATABASE_MANAGER.search_pages(
+            qv, namespace=namespace, limit=limit, kind=(kind or None),
+            similarity_threshold=similarity_threshold)
+        return json.dumps({"status": "success", "query": query, "namespace": namespace, "results": results})
+    except Exception as e:
+        return json.dumps({"status": "error", "message": str(e)})
+
+
+@mcp.tool(name="create_link",
+          description="Create a directed link between two pages in a namespace (from_slug -> to_slug).")
+async def create_link(from_slug: str, to_slug: str, namespace: str = "default"):
+    print(f"🛠️ [SERVER] TOOL: create_link ns={namespace} {from_slug} -> {to_slug}")
+    if not UNIFIED_DATABASE_MANAGER:
+        return json.dumps({"status": "error", "message": "create_link requires the unified database manager."})
+    try:
+        r = await UNIFIED_DATABASE_MANAGER.link_pages(from_slug, to_slug, namespace=namespace)
+        return json.dumps({"status": "success", **r})
+    except Exception as e:
+        return json.dumps({"status": "error", "message": str(e)})
+
 
 @mcp.tool(name="get_trending_keywords",
           description="Extracts and analyzes trending keywords from recent memories using intelligent text processing.")
@@ -1162,5 +1236,18 @@ if __name__ == "__main__":
     print(f"   👤 Neo4j User: {NEO4J_USER}")
     print(f"   🏷️  Server Name: FinAgentMemoryServer")
     print("\n🚀 Starting FinAgent Memory Server...")
-    print("   Use uvicorn to run: uvicorn memory_server:app --host 0.0.0.0 --port 8000")
     print("="*80)
+
+    # stdio is the default transport (gbrain model): one long-lived process per
+    # client, all sharing the always-on Neo4j Aura brain. In stdio mode the lifespan
+    # runs once for the whole process, so init is effectively a startup singleton.
+    # HTTP (MCP_TRANSPORT=http) is for the hosted headless fleet.
+    transport = os.getenv("MCP_TRANSPORT", "stdio").lower()
+    if transport in ("http", "streamable-http"):
+        import uvicorn
+        port = int(os.getenv("PORT", "8000"))
+        print(f"🚀 Launching MemoryAgent over HTTP on 0.0.0.0:{port}")
+        uvicorn.run(app, host="0.0.0.0", port=port)
+    else:
+        print("🚀 Launching MemoryAgent over stdio MCP")
+        mcp.run(transport="stdio")

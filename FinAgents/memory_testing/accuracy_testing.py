@@ -11,7 +11,7 @@ except KeyError:
     exit()
 
 
-MODEL = "gpt-4o-mini"
+MODEL = "openai-gpt-oss-120b"
 DATA_FILE_PATH = "sp500_headlines_2008_2024.csv"
 CONTEXT_TOKEN_LIMIT = 120000
 

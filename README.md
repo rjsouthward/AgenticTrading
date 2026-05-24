@@ -259,24 +259,38 @@ git clone https://github.com/Open-Finance-Lab/AgenticTrading.git
 cd AgenticTrading
 ```
 
-2. **Install dependencies**:
+2. **Create and activate a virtual environment**:
+```bash
+python -m venv .venv
+source .venv/bin/activate
+```
+
+3. **Install dependencies**:
 ```bash
 pip install -r requirements.txt
 ```
 
-3. **Set up Neo4j database**:
+4. **Set up Neo4j database**:
 ```bash
 python scripts/setup_neo4j.py
 ```
 
-4. **Configure environment variables**:
+5. **Configure environment variables**:
 ```bash
-# Create .env file with your API keys
-OPENAI_API_KEY=your_openai_api_key
+# Create .env file with your API keys.
+# LLM calls use DigitalOcean Gradient AI's OpenAI-compatible serverless
+# inference endpoint. The OpenAI SDK reads OPENAI_API_KEY + OPENAI_BASE_URL
+# automatically, so no code change is needed to switch providers.
+OPENAI_API_KEY=your_digitalocean_model_access_key   # doo_v1_...
+OPENAI_BASE_URL=https://inference.do-ai.run/v1
 NEO4J_URI=bolt://localhost:7687
 NEO4J_USER=neo4j
 NEO4J_PASSWORD=your_password
 ```
+
+> Models are referenced by their DigitalOcean ids (e.g. `openai-gpt-oss-120b`).
+> List the models your access key can reach with:
+> `curl https://inference.do-ai.run/v1/models -H "Authorization: Bearer $OPENAI_API_KEY"`
 
 ### Quick Start
 

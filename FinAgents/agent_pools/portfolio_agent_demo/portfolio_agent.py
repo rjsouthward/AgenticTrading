@@ -156,7 +156,7 @@ class PortfolioAgent:
     def __init__(
         self,
         name: str = "PortfolioAgent",
-        model: str = "gpt-4o",
+        model: str = "openai-gpt-oss-120b",
         mode: str = "backtest"
     ):
         self.name = name

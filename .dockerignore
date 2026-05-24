@@ -1,0 +1,19 @@
+# Secrets & local config — must never enter the image (use fly secrets)
+.env
+.env.*
+
+# Build/runtime cruft & large dirs not needed by the memory service
+.venv
+venv
+.git
+.github
+data
+examples
+tests
+docs
+scripts
+*.pkl
+*.log
+**/__pycache__
+.DS_Store
+fly.toml

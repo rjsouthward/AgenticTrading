@@ -307,7 +307,7 @@ Memory {i+1}:
         """Call OpenAI API asynchronously."""
         try:
             # Try different models in order of preference
-            models_to_try = ["o4-mini", "gpt-3.5-turbo", "gpt-3.5-turbo-16k", "gpt-4-turbo-preview"]
+            models_to_try = ["openai-gpt-oss-120b"]
             
             for model in models_to_try:
                 try:

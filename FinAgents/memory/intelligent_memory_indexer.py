@@ -15,13 +15,17 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 import pickle
 import os
+import logging
+from pathlib import Path
 
-# Try to import sentence transformers for advanced embeddings
+# Try to import sentence transformers for advanced embeddings (local fallback)
 try:
     from sentence_transformers import SentenceTransformer
     TRANSFORMERS_AVAILABLE = True
 except ImportError:
     TRANSFORMERS_AVAILABLE = False
+
+logger = logging.getLogger(__name__)
 
 @dataclass
 class MemoryIndex:
@@ -42,40 +46,69 @@ class IntelligentMemoryIndexer:
     Advanced memory indexing system with semantic search capabilities
     """
     
-    def __init__(self, 
+    def __init__(self,
                  index_file: str = "memory_index.pkl",
-                 use_transformers: bool = True,
-                 model_name: str = "all-MiniLM-L6-v2"):
+                 embedding_backend: str = "digitalocean",
+                 model_name: str = "bge-m3",
+                 embedding_dim: int = 1024,
+                 use_transformers: bool = True):
         """
-        Initialize the intelligent memory indexer
-        
+        Initialize the intelligent memory indexer.
+
         Args:
             index_file: Path to store the memory index
-            use_transformers: Whether to use transformer models for embeddings
-            model_name: Name of the sentence transformer model
+            embedding_backend: "digitalocean" (default, OpenAI-compatible API),
+                "transformers" (local sentence-transformers), or "tfidf"
+            model_name: Embedding model id (DO default: "bge-m3", 1024-dim)
+            embedding_dim: Vector dimension produced by the model (must match the
+                Neo4j vector index; bge-m3 / gte-large-en-v1.5 / e5-large-v2 = 1024)
+            use_transformers: Allow falling back to local sentence-transformers
         """
         self.index_file = index_file
-        self.use_transformers = use_transformers and TRANSFORMERS_AVAILABLE
+        self.embedding_backend = embedding_backend
+        self.embedding_model_name = model_name
+        self.embedding_dim = embedding_dim
         self.memory_index: Dict[str, MemoryIndex] = {}
-        
-        # Initialize embedding models
-        if self.use_transformers:
+        self.do_client = None
+        self.use_transformers = False
+
+        # Primary backend: DigitalOcean Gradient AI embeddings via OpenAI SDK.
+        # Reads OPENAI_API_KEY + OPENAI_BASE_URL from the project .env.
+        if embedding_backend == "digitalocean":
             try:
-                self.transformer_model = SentenceTransformer(model_name)
-                print(f"✅ Loaded transformer model: {model_name}")
+                from dotenv import load_dotenv
+                load_dotenv(dotenv_path=Path(__file__).resolve().parents[2] / ".env")
+            except Exception:
+                pass
+            try:
+                import openai
+                self.do_client = openai.OpenAI()  # base_url/key from environment
+                logger.info(f"Using DigitalOcean embeddings: {model_name} (dim={embedding_dim})")
             except Exception as e:
-                print(f"⚠️ Failed to load transformer model: {e}")
-                self.use_transformers = False
-        
-        if not self.use_transformers:
+                logger.warning(f"Failed to init DigitalOcean embeddings client: {e}")
+                self.do_client = None
+
+        # Fallback 1: local sentence-transformers
+        if self.do_client is None and use_transformers and TRANSFORMERS_AVAILABLE \
+                and embedding_backend in ("digitalocean", "transformers"):
+            st_model = model_name if embedding_backend == "transformers" else "all-MiniLM-L6-v2"
+            try:
+                self.transformer_model = SentenceTransformer(st_model)
+                self.use_transformers = True
+                logger.info(f"Loaded transformer model: {st_model}")
+            except Exception as e:
+                logger.warning(f"Failed to load transformer model: {e}")
+
+        # Fallback 2: TF-IDF (always available)
+        if self.do_client is None and not self.use_transformers:
             self.tfidf_vectorizer = TfidfVectorizer(
                 max_features=1000,
                 stop_words='english',
                 ngram_range=(1, 2)
             )
             self.tfidf_fitted = False
-            print("✅ Using TF-IDF vectorizer for embeddings")
-        
+            logger.info("Using TF-IDF vectorizer for embeddings")
+
         # Load existing index
         self.load_index()
     
@@ -133,11 +166,27 @@ class IntelligentMemoryIndexer:
         return list(set(keywords))  # Remove duplicates
     
     def create_text_embedding(self, text: str) -> np.ndarray:
-        """Create text embedding using available model"""
+        """Create text embedding using the configured backend (DigitalOcean bge-m3 by default)."""
+        # Primary: DigitalOcean Gradient AI embeddings (OpenAI-compatible)
+        if self.do_client is not None:
+            try:
+                resp = self.do_client.embeddings.create(
+                    model=self.embedding_model_name,
+                    input=text or " "
+                )
+                return np.array(resp.data[0].embedding, dtype=np.float32)
+            except Exception as e:
+                logger.warning(f"DigitalOcean embedding call failed, using local fallback: {e}")
+
         if self.use_transformers:
             return self.transformer_model.encode([text])[0]
         else:
-            # Use TF-IDF
+            # Use TF-IDF (lazily initialize if a higher-priority backend was active)
+            if not hasattr(self, "tfidf_vectorizer"):
+                self.tfidf_vectorizer = TfidfVectorizer(
+                    max_features=1000, stop_words='english', ngram_range=(1, 2)
+                )
+                self.tfidf_fitted = False
             if not self.tfidf_fitted:
                 # Need to fit on existing texts first
                 all_texts = [text]
@@ -246,11 +295,11 @@ class IntelligentMemoryIndexer:
             # Save index
             await self.save_index()
             
-            print(f"✅ Indexed memory {memory_id[:8]}... with {len(keywords)} keywords")
+            logger.debug(f"Indexed memory {memory_id[:8]}... with {len(keywords)} keywords")
             return True
             
         except Exception as e:
-            print(f"❌ Failed to index memory {memory_id}: {e}")
+            logger.warning(f"Failed to index memory {memory_id}: {e}")
             return False
     
     def semantic_search(self, 
@@ -395,7 +444,7 @@ class IntelligentMemoryIndexer:
             with open(self.index_file, 'wb') as f:
                 pickle.dump(self.memory_index, f)
         except Exception as e:
-            print(f"⚠️ Failed to save index: {e}")
+            logger.warning(f"Failed to save index: {e}")
     
     def load_index(self):
         """Load memory index from disk"""
@@ -403,9 +452,9 @@ class IntelligentMemoryIndexer:
             if os.path.exists(self.index_file):
                 with open(self.index_file, 'rb') as f:
                     self.memory_index = pickle.load(f)
-                print(f"✅ Loaded {len(self.memory_index)} indexed memories")
+                logger.info(f"Loaded {len(self.memory_index)} indexed memories")
         except Exception as e:
-            print(f"⚠️ Failed to load index: {e}")
+            logger.warning(f"Failed to load index: {e}")
             self.memory_index = {}
     
     def get_index_stats(self) -> Dict[str, Any]:
