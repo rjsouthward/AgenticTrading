@@ -1,3 +1,9 @@
+# Project-specific
+tnic3_data/
+.claude/settings.local.json
+.DS_Store
+memory/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
