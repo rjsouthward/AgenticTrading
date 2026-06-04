@@ -163,7 +163,9 @@ def pull_seeds_from_fbrain(
 
     # 3. Resolve tickers to permno canonical IDs via WRDS
     tickers = list(ticker_to_slugs.keys())
-    resolved = resolve_batch(tickers, "ticker", as_of, wrds_conn)
+    # resolve_batch takes list[tuple[ident, id_type]], as_of, conn
+    _resolved_raw = resolve_batch([(t, "ticker") for t in tickers], as_of, wrds_conn)
+    resolved: dict[str, CanonicalId | None] = {t: _resolved_raw.get((t, "ticker")) for t in tickers}
 
     # 4. Build SeedRecord list, one record per (canonical_id, slug) pair
     now_date = as_of

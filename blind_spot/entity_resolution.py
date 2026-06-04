@@ -133,7 +133,7 @@ def resolve_ticker(
     """
     Resolve a trading ticker → permno via CRSP stocknames history.
 
-    stocknames gives point-in-time ticker history (namedt/nameendt), so
+    stocknames gives point-in-time ticker history (namedt/nameenddt), so
     ticker reuse across different permnos is handled correctly.
     """
     sql = f"""
@@ -141,7 +141,7 @@ def resolve_ticker(
         FROM {_STOCK_NAMES}
         WHERE ticker = %(ticker)s
           AND namedt <= %(as_of)s
-          AND (nameendt >= %(as_of)s OR nameendt IS NULL)
+          AND (nameenddt >= %(as_of)s OR nameenddt IS NULL)
         ORDER BY namedt DESC
         LIMIT 1
     """
