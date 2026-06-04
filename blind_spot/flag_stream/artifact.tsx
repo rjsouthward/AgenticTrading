@@ -47,6 +47,7 @@ type Session = {
   d_e: number;
   n_flags: number;
   flags: Flag[];
+  ticker_lookup: Record<string, string>;
 };
 
 const SESSION: Session = __FLAG_DATA__;
@@ -72,6 +73,7 @@ const C = {
 
 export default function BlindSpotFlags() {
   const flags = SESSION.flags ?? [];
+  const lookup: Record<string, string> = SESSION.ticker_lookup ?? {};
   const [tab, setTab] = useState("flags");
   const [minSalience, setMinSalience] = useState(0);
   const [onlyFrontier, setOnlyFrontier] = useState(false);
@@ -123,6 +125,7 @@ export default function BlindSpotFlags() {
         <FlagsTable
           flags={flags}
           visible={visible}
+          lookup={lookup}
           minSalience={minSalience}
           setMinSalience={setMinSalience}
           onlyFrontier={onlyFrontier}
@@ -182,7 +185,7 @@ function SessionStrip() {
 }
 
 function FlagsTable({
-  flags, visible, minSalience, setMinSalience, onlyFrontier, setOnlyFrontier,
+  flags, visible, lookup, minSalience, setMinSalience, onlyFrontier, setOnlyFrontier,
   expanded, setExpanded,
 }) {
   return (
@@ -246,7 +249,7 @@ function FlagsTable({
         <tbody>
           {visible.map((f) => {
             const isOpen = expanded === f.canonical_id;
-            const label = f.overview ? f.overview.ticker : f.canonical_id;
+            const label = f.overview?.ticker ?? lookup[f.canonical_id] ?? f.canonical_id;
             return (
               <Fragment key={f.canonical_id}>
                 <tr
@@ -311,7 +314,7 @@ function FlagsTable({
                         color: C.muted,
                       }}
                     >
-                      path: {f.entity_path.join(" → ")}
+                      path: {f.entity_path.map((id) => lookup[id] ?? id).join(" → ")}
                     </td>
                   </tr>
                 )}
