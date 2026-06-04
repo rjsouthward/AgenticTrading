@@ -354,7 +354,7 @@ def test_pull_seeds_from_fbrain_extracts_tickers():
     driver, _ = make_driver(pages)
     conn = MagicMock()
 
-    with patch("blind_spot.flagger.resolve_batch", return_value={"NVDA": "permno:14593"}):
+    with patch("blind_spot.flagger.resolve_batch", return_value={("NVDA", "ticker"): "permno:14593"}):
         seeds = pull_seeds_from_fbrain(driver, AS_OF, conn, database="test")
 
     assert len(seeds) == 1
@@ -395,7 +395,7 @@ def test_pull_seeds_from_fbrain_skips_unresolved_tickers():
     driver, _ = make_driver(pages)
     conn = MagicMock()
 
-    with patch("blind_spot.flagger.resolve_batch", return_value={"XYZ": None}):
+    with patch("blind_spot.flagger.resolve_batch", return_value={("XYZ", "ticker"): None}):
         seeds = pull_seeds_from_fbrain(driver, AS_OF, conn, database="test")
 
     assert seeds == []
@@ -422,7 +422,7 @@ def test_pull_seeds_from_fbrain_weights_by_recency():
     driver, _ = make_driver(pages)
     conn = MagicMock()
 
-    with patch("blind_spot.flagger.resolve_batch", return_value={"AAPL": "permno:14593"}):
+    with patch("blind_spot.flagger.resolve_batch", return_value={("AAPL", "ticker"): "permno:14593"}):
         seeds = pull_seeds_from_fbrain(driver, AS_OF, conn, database="test")
 
     # Should still produce one seed for permno:14593 (fresh-page wins)

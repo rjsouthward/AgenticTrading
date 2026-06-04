@@ -196,6 +196,9 @@ async def search(
     limit: int = 10,
 ) -> list[dict]:
     d = await _get_driver()
+    # NB: Neo4j's AsyncSession.run() names its positional Cypher arg `query`.
+    # Pass Cypher parameters as a dict — kwargs collide with that positional
+    # whenever a parameter happens to be called `query` (as it is here).
     async with d.session(database=NEO4J_DATABASE) as s:
         if kind:
             result = await s.run(
@@ -207,7 +210,7 @@ async def search(
                        node.kind AS kind
                 ORDER BY score DESC LIMIT $limit
                 """,
-                query=query, ns=namespace, kind=kind, limit=limit,
+                {"query": query, "ns": namespace, "kind": kind, "limit": limit},
             )
         else:
             result = await s.run(
@@ -219,7 +222,7 @@ async def search(
                        node.kind AS kind
                 ORDER BY score DESC LIMIT $limit
                 """,
-                query=query, ns=namespace, limit=limit,
+                {"query": query, "ns": namespace, "limit": limit},
             )
         return [dict(r) async for r in result]
 
@@ -313,8 +316,10 @@ async def cypher(
     params: Optional[dict] = None,
 ) -> list[dict]:
     d = await _get_driver()
+    # Pass params as a dict, not kwargs — a caller-supplied `query` key in
+    # params would otherwise collide with AsyncSession.run's positional arg.
     async with d.session(database=NEO4J_DATABASE) as s:
-        result = await s.run(query, **(params or {}))
+        result = await s.run(query, params or {})
         return [dict(r) async for r in result]
 
 
