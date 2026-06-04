@@ -19,6 +19,7 @@ are optional — load_flags returns flags with overview=None if absent.
 """
 from __future__ import annotations
 
+import json
 from datetime import date, datetime, timezone
 from typing import TYPE_CHECKING, Any
 
@@ -100,11 +101,12 @@ def load_flags(
         meta_row = s.run(
             """
             MATCH (sess:FlagSession {session_id: $sid})
-            RETURN sess.created_at AS created_at,
-                   sess.as_of      AS as_of,
-                   sess.k          AS k,
-                   sess.d_e        AS d_e,
-                   sess.n_flags    AS n_flags
+            RETURN sess.created_at    AS created_at,
+                   sess.as_of         AS as_of,
+                   sess.k             AS k,
+                   sess.d_e           AS d_e,
+                   sess.n_flags       AS n_flags,
+                   sess.ticker_lookup AS ticker_lookup
             """,
             sid=session_id,
         ).single()
@@ -151,14 +153,18 @@ def load_flags(
         )
         flags = [dict(r) for r in rows]
 
+    raw_lookup = meta_row.get("ticker_lookup")
+    ticker_lookup: dict = json.loads(raw_lookup) if raw_lookup else {}
+
     return {
-        "session_id": session_id,
-        "created_at": meta_row["created_at"],
-        "as_of":      meta_row["as_of"],
-        "k":          meta_row["k"],
-        "d_e":        meta_row["d_e"],
-        "n_flags":    meta_row["n_flags"],
-        "flags":      flags,
+        "session_id":    session_id,
+        "created_at":    meta_row["created_at"],
+        "as_of":         meta_row["as_of"],
+        "k":             meta_row["k"],
+        "d_e":           meta_row["d_e"],
+        "n_flags":       meta_row["n_flags"],
+        "flags":         flags,
+        "ticker_lookup": ticker_lookup,
     }
 
 
